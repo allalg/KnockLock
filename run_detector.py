@@ -17,6 +17,8 @@ import signal
 import sys
 import time
 
+import numpy as np
+
 from knocklock.audio_capture import AudioCapture, MicrophoneError
 from knocklock.config import KnockLockConfig
 from knocklock.knock_detection import KnockDetector, KnockEvent
@@ -106,24 +108,28 @@ def main() -> None:
         config.detection.amplitude_threshold = args.threshold
         print(f"Using manual threshold: {config.detection.amplitude_threshold:.4f}")
     else:
-        print("Calibrating room background noise (0.4s) ...", end="", flush=True)
+        print("Calibrating room background noise (0.5s) ...", end="", flush=True)
         calibration_peaks = []
+        start_cal = time.time()
 
         def _calib_chunk(chunk, _):
-            calibration_peaks.append(float(compute_peak(chunk)))
+            # Skip first 150 ms of audio driver startup electrical pop
+            if time.time() - start_cal > 0.15:
+                calibration_peaks.append(float(compute_peak(chunk)))
 
         try:
             with AudioCapture(config.audio, on_chunk=_calib_chunk):
-                time.sleep(0.4)
-            ambient_peak = max(calibration_peaks) if calibration_peaks else 0.001
-            # Set threshold comfortably above ambient noise (default floor 0.005)
-            calibrated_th = max(ambient_peak * 3.5, 0.005)
+                time.sleep(0.5)
+            # Use 80th percentile of quiet samples to reject any transient spike
+            ambient_peak = float(np.percentile(calibration_peaks, 80)) if calibration_peaks else 0.0005
+            # Set threshold above ambient noise with a sensitive floor of 0.003 for table thumps
+            calibrated_th = max(ambient_peak * 3.0, 0.003)
             config.detection.amplitude_threshold = calibrated_th
             print(f" done.")
             print(f"Ambient noise peak: {ambient_peak:.4f} → Set threshold: {calibrated_th:.4f}")
         except Exception as e:
-            print(f" (fallback to default 0.006: {e})")
-            config.detection.amplitude_threshold = 0.006
+            print(f" (fallback to default 0.003: {e})")
+            config.detection.amplitude_threshold = 0.003
 
     # ── Set up visualization ──────────────────────────────────────────
     meter = LiveMeter(config.visualization, config.detection) if config.visualization.enabled else None

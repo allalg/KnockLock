@@ -15,6 +15,7 @@ from knocklock.signal_processing import (
     NoiseFloorEstimator,
     compute_rms,
     compute_peak,
+    compute_mechanical_ratio,
     design_highpass,
 )
 
@@ -130,3 +131,23 @@ class TestNoiseFloorEstimator:
         assert est.is_above_floor(est.floor * 10)
         # Something equal to floor should not be
         assert not est.is_above_floor(est.floor * 0.5)
+
+
+# ── compute_mechanical_ratio ──────────────────────────────────────────────
+
+class TestComputeMechanicalRatio:
+    def test_low_frequency_knock_has_high_ratio(self):
+        sr = 44100
+        t = np.linspace(0, 512 / sr, 512, endpoint=False)
+        # 80 Hz mechanical shock
+        knock = (np.sin(2 * np.pi * 80 * t) * np.exp(-t / 0.01)).astype(np.float32)
+        ratio = compute_mechanical_ratio(knock, sr)
+        assert ratio > 1.0, f"Expected mechanical knock ratio > 1.0, got {ratio}"
+
+    def test_high_frequency_speaker_audio_has_low_ratio(self):
+        sr = 44100
+        t = np.linspace(0, 512 / sr, 512, endpoint=False)
+        # 1500 Hz + 3000 Hz vocal/speaker tone
+        audio = (np.sin(2 * np.pi * 1500 * t) + np.sin(2 * np.pi * 3000 * t)).astype(np.float32)
+        ratio = compute_mechanical_ratio(audio, sr)
+        assert ratio < 0.4, f"Expected speaker audio ratio < 0.4, got {ratio}"

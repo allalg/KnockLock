@@ -22,9 +22,8 @@ class AudioConfig:
 @dataclass
 class FilterConfig:
     """Signal-processing parameters."""
-    # High-pass filter to remove DC offset / slow air-con rumble
-    # Set to 40 Hz so chassis knock thump (50-150 Hz) is NOT attenuated
-    highpass_cutoff_hz: float = 40.0
+    # 20 Hz high-pass removes DC offset while preserving low-frequency table thumps (25-80 Hz)
+    highpass_cutoff_hz: float = 20.0
     highpass_order: int = 2
 
     # Short-time energy window (seconds) used for RMS calculation
@@ -35,19 +34,24 @@ class FilterConfig:
 class DetectionConfig:
     """Knock-event detection thresholds."""
     # ── Amplitude gate (peak absolute value [0.0–1.0]) ───────────────
-    # A natural physical tap on laptop or desk typically peaks between 0.005 and 0.05
-    amplitude_threshold: float = 0.006
+    # Sensitive to gentle palm-rest taps and table thumps (default 0.003)
+    amplitude_threshold: float = 0.003
+
+    # ── Spectral Discriminator (Mechanical Shock vs. Speaker Audio) ────
+    # Ratio of structure-borne energy (25-350 Hz) to acoustic speaker energy (900-5000 Hz)
+    # Physical knocks on chassis/desk have ratio > 1.2; speaker music/voice has ratio < 0.3
+    min_mechanical_ratio: float = 0.65
 
     # ── Transient shape ───────────────────────────────────────────────
     # How fast the peak must rise relative to previous baseline
-    rise_ratio_threshold: float = 1.8
+    rise_ratio_threshold: float = 1.6
 
     # ── Duration gate ─────────────────────────────────────────────────
     # A knock must stay above threshold for at least this long …
     min_duration_s: float = 0.005   # 5 ms (filters out tiny electrical pops)
     # … but MUST NOT be longer than this!
-    # Sounds lasting > 140 ms (speech, claps, chair drag, humming) are REJECTED as noise.
-    max_duration_s: float = 0.140   # 140 ms
+    # Sounds lasting > 160 ms (speech, claps, chair drag, continuous audio) are rejected.
+    max_duration_s: float = 0.160   # 160 ms
 
     # ── Refractory period ─────────────────────────────────────────────
     # Minimum gap between two consecutive knock events (prevents echo double-trigger)
@@ -57,7 +61,7 @@ class DetectionConfig:
     # Running-average time constant for background noise estimate
     noise_floor_alpha: float = 0.985
     # Minimum multiplier above noise floor to call something a knock
-    snr_multiplier: float = 3.5
+    snr_multiplier: float = 3.0
 
     # ── Debug diagnostics ─────────────────────────────────────────────
     debug: bool = False

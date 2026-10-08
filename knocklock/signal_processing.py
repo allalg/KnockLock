@@ -99,3 +99,26 @@ class NoiseFloorEstimator:
     def is_above_floor(self, rms: float) -> bool:
         """True if rms exceeds the dynamic noise floor by the SNR multiplier."""
         return rms > self._floor * self._snr_mult
+
+
+# ── Spectral Discriminator (Mechanical Shock vs. Speaker Audio) ───────────
+
+def compute_mechanical_ratio(chunk: np.ndarray, sample_rate: int = 44100) -> float:
+    """
+    Ratio of structure-borne mechanical shock energy (25-350 Hz)
+    to airborne acoustic speaker/vocal energy (900-5000 Hz).
+
+    - Physical knock on laptop or desk: conducts mechanically through chassis,
+      producing high low-frequency shock energy (ratio > 1.2 to 10.0).
+    - Laptop speakers playing audio / human speech: dominated by mid/high
+      frequencies, with tiny micro-speakers having severe bass roll-off (ratio < 0.4).
+    """
+    if len(chunk) < 64:
+        return 2.0
+    fft = np.abs(np.fft.rfft(chunk))
+    freqs = np.fft.rfftfreq(len(chunk), 1.0 / sample_rate)
+    low_energy = float(np.sum(fft[(freqs >= 25.0) & (freqs <= 350.0)]))
+    high_energy = float(np.sum(fft[(freqs >= 900.0) & (freqs <= 5000.0)]))
+    if high_energy < 1e-9:
+        return 5.0
+    return low_energy / high_energy

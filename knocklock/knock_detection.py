@@ -33,6 +33,7 @@ from knocklock.signal_processing import (
     NoiseFloorEstimator,
     compute_rms,
     compute_peak,
+    compute_mechanical_ratio,
 )
 
 
@@ -81,11 +82,11 @@ class KnockDetector:
 
         # ── State machine ─────────────────────────────────────────────
         self._in_knock: bool = False
-        self._suppress_until_quiet: bool = False
         self._knock_start_ts: float = 0.0
         self._knock_peak_amp: float = 0.0
         self._knock_peak_rms: float = 0.0
         self._knock_duration_s: float = 0.0
+        self._knock_max_mech_ratio: float = 0.0
         self._prev_peak: float = 0.0
         self._prev_rms: float = 0.0
 
@@ -111,12 +112,13 @@ class KnockDetector:
         sr = self.config.audio.sample_rate
         chunk_duration_s = len(chunk) / sr if sr > 0 else 0.0116
 
-        # 1. High-pass filter (removes DC offset and low vibrations)
+        # 1. High-pass filter (20 Hz preserves table thumps down to 25 Hz)
         filtered = self._hp_filter.process(chunk)
 
-        # 2. Compute energy metrics
+        # 2. Compute energy and spectral mechanical shock metrics
         peak = compute_peak(filtered)
         rms = compute_rms(filtered)
+        mech_ratio = compute_mechanical_ratio(filtered, sr)
 
         # 3. Dynamic effective threshold based on adaptive noise floor
         effective_threshold = max(
@@ -131,10 +133,6 @@ class KnockDetector:
         # 4. Check whether chunk amplitude exceeds effective threshold
         above_threshold = peak >= effective_threshold
 
-        # Clear suppression when the room goes quiet
-        if not above_threshold:
-            self._suppress_until_quiet = False
-
         # 5. Rise-ratio check relative to previous peak or noise floor
         baseline = max(self._prev_peak, self._noise_floor.floor, 1e-6)
         rise_ratio = peak / baseline
@@ -144,11 +142,14 @@ class KnockDetector:
 
         # ── State machine transitions ──────────────────────────────────
         if not self._in_knock:
-            # Must rise sharply above recent baseline, or be a strong impact
+            # Mechanical shock check: physical knocks on chassis/desk have high low-freq shock (>= min_mechanical_ratio)
+            # Laptop speakers (music/video) and speech are dominated by mid/high freqs and fail this check
+            is_mech_shock = mech_ratio >= det.min_mechanical_ratio
+
             is_onset = (
                 above_threshold
                 and not in_refractory
-                and not self._suppress_until_quiet
+                and is_mech_shock
                 and (
                     rise_ratio >= det.rise_ratio_threshold
                     or peak >= effective_threshold * 1.5
@@ -160,29 +161,33 @@ class KnockDetector:
                 self._knock_peak_amp = peak
                 self._knock_peak_rms = rms
                 self._knock_duration_s = chunk_duration_s
+                self._knock_max_mech_ratio = mech_ratio
         else:
-            # Inside candidate knock: track peak amplitude
-            if peak > self._knock_peak_amp:
-                self._knock_peak_amp = peak
-            if rms > self._knock_peak_rms:
-                self._knock_peak_rms = rms
+            # Inside candidate knock:
+            if above_threshold:
+                self._knock_duration_s += chunk_duration_s
+                if peak > self._knock_peak_amp:
+                    self._knock_peak_amp = peak
+                if rms > self._knock_peak_rms:
+                    self._knock_peak_rms = rms
+                if mech_ratio > self._knock_max_mech_ratio:
+                    self._knock_max_mech_ratio = mech_ratio
 
-            self._knock_duration_s += chunk_duration_s
-
-            # Reject continuous noise (speech, chair drag, coughing, fans)
-            if self._knock_duration_s > det.max_duration_s:
-                # Sustained sound is NOT a knock; suppress until silence returns
-                self._in_knock = False
-                self._suppress_until_quiet = True
-                self._knock_duration_s = 0.0
-                self._knock_peak_amp = 0.0
-                self._knock_peak_rms = 0.0
+                # Reject continuous noise (speech, fans, long sustained sounds > max_duration_s)
+                if self._knock_duration_s > det.max_duration_s:
+                    self._in_knock = False
+                    self._knock_duration_s = 0.0
+                    self._knock_peak_amp = 0.0
+                    self._knock_peak_rms = 0.0
 
             # Sound has dropped back below threshold within valid knock window
-            elif not above_threshold:
+            else:
                 duration_ms = self._knock_duration_s * 1000.0
 
-                if self._knock_duration_s >= det.min_duration_s:
+                if (
+                    det.min_duration_s <= self._knock_duration_s <= det.max_duration_s
+                    and self._knock_max_mech_ratio >= det.min_mechanical_ratio
+                ):
                     self._knock_count += 1
                     event = KnockEvent(
                         index=self._knock_count,

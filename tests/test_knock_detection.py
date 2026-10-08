@@ -153,17 +153,17 @@ class TestKnockDetectorBasic:
 
 class TestKnockDetectorEdgeCases:
     def test_very_short_transient_ignored(self):
-        """A single-chunk spike below min_duration should be ignored."""
+        """A transient below min_duration should be ignored."""
         config = KnockLockConfig()
         config.detection.amplitude_threshold = 0.05
         config.detection.rise_ratio_threshold = 1.5
-        config.detection.min_duration_s = 0.050   # 50 ms — longer than one chunk
+        config.detection.min_duration_s = 0.080   # 80 ms min duration
         config.detection.max_duration_s = 0.500
         config.detection.noise_floor_alpha = 0.5
-        # 1-chunk knock = ~11.6 ms < 50 ms min
+        # 1-chunk knock = ~11.6 ms (< 80 ms min)
         stream = _build_stream([
             ('silence', 50),
-            ('knock', 0.8, 1),   # only 1 chunk ≈ 11.6 ms
+            ('knock', 0.8, 1),
             ('silence', 50),
         ])
         events = _run_detector(stream, config=config)
@@ -178,17 +178,17 @@ class TestKnockDetectorEdgeCases:
         assert det.chunk_count == 10
 
     def test_sustained_sound_rejected(self):
-        """A continuous loud sound (speech, hum > max_duration) must NOT trigger a knock."""
+        """A continuous acoustic sound (speech, speaker audio > max_duration or low mech ratio) must NOT trigger a knock."""
         config = KnockLockConfig()
         config.detection.amplitude_threshold = 0.05
         config.detection.rise_ratio_threshold = 1.5
         config.detection.min_duration_s = 0.005
         config.detection.max_duration_s = 0.100  # 100 ms limit
-        # 25 chunks of 400 Hz tone = ~290 ms > 100 ms limit
+        # 25 chunks of 1500 Hz vocal/speaker tone = ~290 ms
         stream = _build_stream([
             ('silence', 20),
-            ('tone', 400, 0.4, 25),
+            ('tone', 1500, 0.4, 25),
             ('silence', 20),
         ])
         events = _run_detector(stream, config=config)
-        assert len(events) == 0, f"Expected 0 knocks for sustained sound, got {len(events)}"
+        assert len(events) == 0, f"Expected 0 knocks for sustained speaker audio, got {len(events)}"
