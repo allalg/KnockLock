@@ -68,6 +68,13 @@ def _build_stream(pattern: list) -> list[tuple[np.ndarray, float]]:
                 fade = np.linspace(1.0, 0.1, CHUNK, dtype=np.float32) * amp
                 stream.append((fade, t))
                 t += dt
+        elif item[0] == 'tone':
+            freq, amp, n = item[1], item[2], item[3]
+            for i in range(n):
+                t_arr = np.linspace(t, t + dt, CHUNK, endpoint=False, dtype=np.float32)
+                chunk = (np.sin(2 * np.pi * freq * t_arr) * amp).astype(np.float32)
+                stream.append((chunk, t))
+                t += dt
     return stream
 
 
@@ -169,3 +176,19 @@ class TestKnockDetectorEdgeCases:
         for chunk, ts in stream:
             det.process(chunk, ts)
         assert det.chunk_count == 10
+
+    def test_sustained_sound_rejected(self):
+        """A continuous loud sound (speech, hum > max_duration) must NOT trigger a knock."""
+        config = KnockLockConfig()
+        config.detection.amplitude_threshold = 0.05
+        config.detection.rise_ratio_threshold = 1.5
+        config.detection.min_duration_s = 0.005
+        config.detection.max_duration_s = 0.100  # 100 ms limit
+        # 25 chunks of 400 Hz tone = ~290 ms > 100 ms limit
+        stream = _build_stream([
+            ('silence', 20),
+            ('tone', 400, 0.4, 25),
+            ('silence', 20),
+        ])
+        events = _run_detector(stream, config=config)
+        assert len(events) == 0, f"Expected 0 knocks for sustained sound, got {len(events)}"

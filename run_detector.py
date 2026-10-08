@@ -55,6 +55,11 @@ def parse_args() -> argparse.Namespace:
         help="Minimum gap between knocks in seconds (default: 0.12)",
     )
     p.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print debug information for candidate sounds and rejected noise",
+    )
+    p.add_argument(
         "--no-viz",
         action="store_true",
         help="Disable the live ASCII meter (print knock events only)",
@@ -91,6 +96,8 @@ def main() -> None:
         config.detection.rise_ratio_threshold = args.rise_ratio
     if args.refractory is not None:
         config.detection.refractory_s = args.refractory
+    if args.debug:
+        config.detection.debug = True
     if args.no_viz:
         config.visualization.enabled = False
 
@@ -108,15 +115,15 @@ def main() -> None:
         try:
             with AudioCapture(config.audio, on_chunk=_calib_chunk):
                 time.sleep(0.4)
-            ambient_peak = max(calibration_peaks) if calibration_peaks else 0.003
-            # Set threshold comfortably above ambient noise
-            calibrated_th = max(ambient_peak * 3.0, 0.012)
+            ambient_peak = max(calibration_peaks) if calibration_peaks else 0.001
+            # Set threshold comfortably above ambient noise (default floor 0.005)
+            calibrated_th = max(ambient_peak * 3.5, 0.005)
             config.detection.amplitude_threshold = calibrated_th
             print(f" done.")
             print(f"Ambient noise peak: {ambient_peak:.4f} → Set threshold: {calibrated_th:.4f}")
         except Exception as e:
-            print(f" (fallback to default 0.015: {e})")
-            config.detection.amplitude_threshold = 0.015
+            print(f" (fallback to default 0.006: {e})")
+            config.detection.amplitude_threshold = 0.006
 
     # ── Set up visualization ──────────────────────────────────────────
     meter = LiveMeter(config.visualization, config.detection) if config.visualization.enabled else None

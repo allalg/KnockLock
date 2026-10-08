@@ -93,9 +93,25 @@ class AudioCapture:
         try:
             self._start_time = time.time()
             self._frames_captured = 0
+
+            # Determine sample rate and channels, adapting to device if needed
+            sr = self.config.sample_rate
+            ch = self.config.channels
+            if self.config.device is not None:
+                try:
+                    dev_info = sd.query_devices(self.config.device)
+                    sr = int(dev_info.get("default_samplerate", sr))
+                    max_ch = dev_info.get("max_input_channels", ch)
+                    if max_ch > 0:
+                        ch = min(ch, max_ch)
+                    self.config.sample_rate = sr
+                    self.config.channels = ch
+                except Exception:
+                    pass
+
             self._stream = sd.InputStream(
-                samplerate=self.config.sample_rate,
-                channels=self.config.channels,
+                samplerate=sr,
+                channels=ch,
                 blocksize=self.config.chunk_size,
                 dtype=self.config.dtype,
                 device=self.config.device,

@@ -35,28 +35,32 @@ class FilterConfig:
 class DetectionConfig:
     """Knock-event detection thresholds."""
     # ── Amplitude gate (peak absolute value [0.0–1.0]) ───────────────
-    # A physical tap on laptop or desk typically peaks between 0.01 and 0.10
-    amplitude_threshold: float = 0.015
+    # A natural physical tap on laptop or desk typically peaks between 0.005 and 0.05
+    amplitude_threshold: float = 0.006
 
     # ── Transient shape ───────────────────────────────────────────────
     # How fast the peak must rise relative to previous baseline
-    rise_ratio_threshold: float = 2.0
+    rise_ratio_threshold: float = 1.8
 
     # ── Duration gate ─────────────────────────────────────────────────
     # A knock must stay above threshold for at least this long …
     min_duration_s: float = 0.005   # 5 ms (filters out tiny electrical pops)
-    # … but not longer than this (longer sounds are speech/rumble, NOT knocks)
-    max_duration_s: float = 0.250   # 250 ms
+    # … but MUST NOT be longer than this!
+    # Sounds lasting > 140 ms (speech, claps, chair drag, humming) are REJECTED as noise.
+    max_duration_s: float = 0.140   # 140 ms
 
     # ── Refractory period ─────────────────────────────────────────────
     # Minimum gap between two consecutive knock events (prevents echo double-trigger)
-    refractory_s: float = 0.120     # 120 ms
+    refractory_s: float = 0.100     # 100 ms
 
     # ── Noise floor adaptation ────────────────────────────────────────
     # Running-average time constant for background noise estimate
-    noise_floor_alpha: float = 0.990
+    noise_floor_alpha: float = 0.985
     # Minimum multiplier above noise floor to call something a knock
-    snr_multiplier: float = 3.0
+    snr_multiplier: float = 3.5
+
+    # ── Debug diagnostics ─────────────────────────────────────────────
+    debug: bool = False
 
 
 @dataclass

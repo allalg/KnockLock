@@ -81,6 +81,7 @@ class KnockDetector:
 
         # ── State machine ─────────────────────────────────────────────
         self._in_knock: bool = False
+        self._suppress_until_quiet: bool = False
         self._knock_start_ts: float = 0.0
         self._knock_peak_amp: float = 0.0
         self._knock_peak_rms: float = 0.0
@@ -117,15 +118,22 @@ class KnockDetector:
         peak = compute_peak(filtered)
         rms = compute_rms(filtered)
 
-        # 3. Update noise floor during quiet periods
-        if not self._in_knock and peak < det.amplitude_threshold:
+        # 3. Dynamic effective threshold based on adaptive noise floor
+        effective_threshold = max(
+            det.amplitude_threshold,
+            self._noise_floor.floor * det.snr_multiplier,
+        )
+
+        # Update noise floor during quiet non-knock periods
+        if not self._in_knock and peak < effective_threshold:
             self._noise_floor.update(peak)
 
-        # 4. Check whether chunk amplitude exceeds both threshold and noise floor
-        above_threshold = (
-            peak >= det.amplitude_threshold
-            and self._noise_floor.is_above_floor(peak)
-        )
+        # 4. Check whether chunk amplitude exceeds effective threshold
+        above_threshold = peak >= effective_threshold
+
+        # Clear suppression when the room goes quiet
+        if not above_threshold:
+            self._suppress_until_quiet = False
 
         # 5. Rise-ratio check relative to previous peak or noise floor
         baseline = max(self._prev_peak, self._noise_floor.floor, 1e-6)
@@ -136,9 +144,15 @@ class KnockDetector:
 
         # ── State machine transitions ──────────────────────────────────
         if not self._in_knock:
-            is_onset = above_threshold and not in_refractory and (
-                rise_ratio >= det.rise_ratio_threshold
-                or peak >= det.amplitude_threshold * 1.3
+            # Must rise sharply above recent baseline, or be a strong impact
+            is_onset = (
+                above_threshold
+                and not in_refractory
+                and not self._suppress_until_quiet
+                and (
+                    rise_ratio >= det.rise_ratio_threshold
+                    or peak >= effective_threshold * 1.5
+                )
             )
             if is_onset:
                 self._in_knock = True
@@ -147,7 +161,7 @@ class KnockDetector:
                 self._knock_peak_rms = rms
                 self._knock_duration_s = chunk_duration_s
         else:
-            # Inside a knock event: track peak amplitude
+            # Inside candidate knock: track peak amplitude
             if peak > self._knock_peak_amp:
                 self._knock_peak_amp = peak
             if rms > self._knock_peak_rms:
@@ -155,11 +169,17 @@ class KnockDetector:
 
             self._knock_duration_s += chunk_duration_s
 
-            # Conclude knock when energy drops OR when transient impulse window (~70 ms) completes.
-            # This prevents lingering desk vibrations/resonance from blocking subsequent knocks.
-            transient_settled = (not above_threshold) or (self._knock_duration_s >= 0.070)
+            # Reject continuous noise (speech, chair drag, coughing, fans)
+            if self._knock_duration_s > det.max_duration_s:
+                # Sustained sound is NOT a knock; suppress until silence returns
+                self._in_knock = False
+                self._suppress_until_quiet = True
+                self._knock_duration_s = 0.0
+                self._knock_peak_amp = 0.0
+                self._knock_peak_rms = 0.0
 
-            if transient_settled:
+            # Sound has dropped back below threshold within valid knock window
+            elif not above_threshold:
                 duration_ms = self._knock_duration_s * 1000.0
 
                 if self._knock_duration_s >= det.min_duration_s:
