@@ -122,3 +122,37 @@ def compute_mechanical_ratio(chunk: np.ndarray, sample_rate: int = 44100) -> flo
     if high_energy < 1e-9:
         return 5.0
     return low_energy / high_energy
+
+
+# ── Spectral Flatness & Crest Factor (Impulse vs. Speaker Audio) ─────────
+
+def compute_spectral_flatness(chunk: np.ndarray) -> float:
+    """
+    Wiener entropy (spectral flatness) of a 1-D audio chunk.
+    Ratio of geometric mean to arithmetic mean of the power spectrum (|FFT|^2).
+
+    - Physical knock / impact: broadband impulse with energy spread across
+      frequencies (flatness > 0.10, typically 0.25–0.70).
+    - Speaker audio (speech, music, video): tonal and harmonic peaks
+      (flatness is low, typically 0.001–0.030).
+    """
+    if len(chunk) < 64:
+        return 0.5
+    fft_sq = np.abs(np.fft.rfft(chunk.astype(np.float64))) ** 2 + 1e-12
+    geo_mean = np.exp(np.mean(np.log(fft_sq)))
+    arith_mean = np.mean(fft_sq)
+    if arith_mean < 1e-12:
+        return 0.5
+    return float(geo_mean / arith_mean)
+
+
+def compute_crest_factor(chunk: np.ndarray) -> float:
+    """
+    Peak-to-RMS ratio (crest factor).
+    - Sharp knock impulse: energy concentrated in a few samples (crest factor > 2.5).
+    - Continuous speech/music/video: continuous wave (crest factor < 2.3).
+    """
+    rms = compute_rms(chunk)
+    if rms < 1e-9:
+        return 1.0
+    return float(compute_peak(chunk) / rms)

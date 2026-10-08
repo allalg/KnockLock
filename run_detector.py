@@ -122,14 +122,14 @@ def main() -> None:
                 time.sleep(0.5)
             # Use 80th percentile of quiet samples to reject any transient spike
             ambient_peak = float(np.percentile(calibration_peaks, 80)) if calibration_peaks else 0.0005
-            # Set threshold above ambient noise with a sensitive floor of 0.003 for table thumps
-            calibrated_th = max(ambient_peak * 3.0, 0.003)
+            # Set threshold above ambient noise with a baseline floor of 0.030 to reject video/speech
+            calibrated_th = max(ambient_peak * 3.0, 0.030)
             config.detection.amplitude_threshold = calibrated_th
             print(f" done.")
             print(f"Ambient noise peak: {ambient_peak:.4f} → Set threshold: {calibrated_th:.4f}")
         except Exception as e:
-            print(f" (fallback to default 0.003: {e})")
-            config.detection.amplitude_threshold = 0.003
+            print(f" (fallback to default 0.030: {e})")
+            config.detection.amplitude_threshold = 0.030
 
     # ── Set up visualization ──────────────────────────────────────────
     meter = LiveMeter(config.visualization, config.detection) if config.visualization.enabled else None

@@ -34,34 +34,43 @@ class FilterConfig:
 class DetectionConfig:
     """Knock-event detection thresholds."""
     # ── Amplitude gate (peak absolute value [0.0–1.0]) ───────────────
-    # Sensitive to gentle palm-rest taps and table thumps (default 0.003)
-    amplitude_threshold: float = 0.003
+    # Normal video/speech audio peaks at 0.004–0.025.
+    # Physical knocks and table thumps peak at 0.05–0.99.
+    amplitude_threshold: float = 0.035
 
-    # ── Spectral Discriminator (Mechanical Shock vs. Speaker Audio) ────
-    # Ratio of structure-borne energy (25-350 Hz) to acoustic speaker energy (900-5000 Hz)
-    # Physical knocks on chassis/desk have ratio > 1.2; speaker music/voice has ratio < 0.3
-    min_mechanical_ratio: float = 0.65
+    # ── Spectral Flatness (Wiener Entropy) ───────────────────────────
+    # Distinguishes broadband mechanical impulses from tonal speaker audio (speech/music).
+    # Real physical knocks/thumps have power flatness 0.20–0.70.
+    # Video speech/music from laptop speakers has power flatness 0.001–0.020.
+    min_spectral_flatness: float = 0.05
+
+    # ── Crest Factor (Peak / RMS) ────────────────────────────────────
+    # Physical impulses concentrate energy into sharp spikes (crest factor > 2.4).
+    # Continuous speaker audio / speech has crest factor < 2.3.
+    min_crest_factor: float = 2.4
+
+    # Backwards-compatible mechanical ratio field
+    min_mechanical_ratio: float = 0.55
 
     # ── Transient shape ───────────────────────────────────────────────
     # How fast the peak must rise relative to previous baseline
-    rise_ratio_threshold: float = 1.6
+    rise_ratio_threshold: float = 1.8
 
     # ── Duration gate ─────────────────────────────────────────────────
     # A knock must stay above threshold for at least this long …
-    min_duration_s: float = 0.005   # 5 ms (filters out tiny electrical pops)
-    # … but MUST NOT be longer than this!
-    # Sounds lasting > 160 ms (speech, claps, chair drag, continuous audio) are rejected.
-    max_duration_s: float = 0.160   # 160 ms
+    min_duration_s: float = 0.005   # 5 ms
+    # Maximum allowed duration for an impulse (longer sounds are continuous noise/speech/music)
+    max_duration_s: float = 0.120   # 120 ms
 
     # ── Refractory period ─────────────────────────────────────────────
-    # Minimum gap between two consecutive knock events (prevents echo double-trigger)
-    refractory_s: float = 0.100     # 100 ms
+    # Minimum gap between two consecutive knock events (prevents echo/rebound double-trigger)
+    refractory_s: float = 0.150     # 150 ms
 
     # ── Noise floor adaptation ────────────────────────────────────────
     # Running-average time constant for background noise estimate
     noise_floor_alpha: float = 0.985
     # Minimum multiplier above noise floor to call something a knock
-    snr_multiplier: float = 3.0
+    snr_multiplier: float = 2.8
 
     # ── Debug diagnostics ─────────────────────────────────────────────
     debug: bool = False

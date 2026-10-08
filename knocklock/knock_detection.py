@@ -34,6 +34,8 @@ from knocklock.signal_processing import (
     compute_rms,
     compute_peak,
     compute_mechanical_ratio,
+    compute_spectral_flatness,
+    compute_crest_factor,
 )
 
 
@@ -86,7 +88,8 @@ class KnockDetector:
         self._knock_peak_amp: float = 0.0
         self._knock_peak_rms: float = 0.0
         self._knock_duration_s: float = 0.0
-        self._knock_max_mech_ratio: float = 0.0
+        self._knock_max_flatness: float = 0.0
+        self._knock_max_crest: float = 0.0
         self._prev_peak: float = 0.0
         self._prev_rms: float = 0.0
 
@@ -115,10 +118,11 @@ class KnockDetector:
         # 1. High-pass filter (20 Hz preserves table thumps down to 25 Hz)
         filtered = self._hp_filter.process(chunk)
 
-        # 2. Compute energy and spectral mechanical shock metrics
+        # 2. Compute energy, crest factor, and spectral flatness
         peak = compute_peak(filtered)
         rms = compute_rms(filtered)
-        mech_ratio = compute_mechanical_ratio(filtered, sr)
+        crest = peak / max(rms, 1e-6)
+        flatness = compute_spectral_flatness(filtered)
 
         # 3. Dynamic effective threshold based on adaptive noise floor
         effective_threshold = max(
@@ -128,7 +132,7 @@ class KnockDetector:
 
         # Update noise floor during quiet non-knock periods
         if not self._in_knock and peak < effective_threshold:
-            self._noise_floor.update(peak)
+            self._noise_floor.update(rms)
 
         # 4. Check whether chunk amplitude exceeds effective threshold
         above_threshold = peak >= effective_threshold
@@ -142,18 +146,22 @@ class KnockDetector:
 
         # ── State machine transitions ──────────────────────────────────
         if not self._in_knock:
-            # Mechanical shock check: physical knocks on chassis/desk have high low-freq shock (>= min_mechanical_ratio)
-            # Laptop speakers (music/video) and speech are dominated by mid/high freqs and fail this check
-            is_mech_shock = mech_ratio >= det.min_mechanical_ratio
+            # Impulsive attack check:
+            # - Knocks concentrate energy in a tiny spike (crest >= min_crest_factor).
+            # - If peak >= 0.65, mic is clipping, which flattens the peak and reduces crest factor.
+            is_impulsive = (crest >= det.min_crest_factor or peak >= 0.65)
+
+            # Spectral check:
+            # - Physical knock impacts are wideband transients (flatness >= min_spectral_flatness).
+            # - Speaker music, dialogue, and video sounds are tonal/harmonic (flatness is low).
+            is_broadband = flatness >= det.min_spectral_flatness
 
             is_onset = (
                 above_threshold
                 and not in_refractory
-                and is_mech_shock
-                and (
-                    rise_ratio >= det.rise_ratio_threshold
-                    or peak >= effective_threshold * 1.5
-                )
+                and rise_ratio >= det.rise_ratio_threshold
+                and is_impulsive
+                and is_broadband
             )
             if is_onset:
                 self._in_knock = True
@@ -161,7 +169,17 @@ class KnockDetector:
                 self._knock_peak_amp = peak
                 self._knock_peak_rms = rms
                 self._knock_duration_s = chunk_duration_s
-                self._knock_max_mech_ratio = mech_ratio
+                self._knock_max_flatness = flatness
+                self._knock_max_crest = crest
+            elif det.debug and above_threshold and not in_refractory:
+                reasons = []
+                if rise_ratio < det.rise_ratio_threshold:
+                    reasons.append(f"slow rise ({rise_ratio:.1f}x < {det.rise_ratio_threshold}x)")
+                if not is_impulsive:
+                    reasons.append(f"low crest ({crest:.2f} < {det.min_crest_factor})")
+                if not is_broadband:
+                    reasons.append(f"tonal/video audio flatness ({flatness:.4f} < {det.min_spectral_flatness})")
+                print(f"  [DEBUG REJECT ONSET] peak={peak:.3f} | {', '.join(reasons)}")
         else:
             # Inside candidate knock:
             if above_threshold:
@@ -170,23 +188,28 @@ class KnockDetector:
                     self._knock_peak_amp = peak
                 if rms > self._knock_peak_rms:
                     self._knock_peak_rms = rms
-                if mech_ratio > self._knock_max_mech_ratio:
-                    self._knock_max_mech_ratio = mech_ratio
+                if flatness > self._knock_max_flatness:
+                    self._knock_max_flatness = flatness
+                if crest > self._knock_max_crest:
+                    self._knock_max_crest = crest
 
-                # Reject continuous noise (speech, fans, long sustained sounds > max_duration_s)
+                # Reject continuous sounds (speech, music, fans lasting > max_duration_s)
                 if self._knock_duration_s > det.max_duration_s:
+                    if det.debug:
+                        print(f"  [DEBUG REJECT SUSTAINED] Sound > {det.max_duration_s*1000:.0f}ms (continuous speech/video)")
                     self._in_knock = False
                     self._knock_duration_s = 0.0
                     self._knock_peak_amp = 0.0
                     self._knock_peak_rms = 0.0
+                    self._knock_max_flatness = 0.0
 
-            # Sound has dropped back below threshold within valid knock window
+            # Sound has decayed back below threshold within valid knock window
             else:
                 duration_ms = self._knock_duration_s * 1000.0
 
                 if (
                     det.min_duration_s <= self._knock_duration_s <= det.max_duration_s
-                    and self._knock_max_mech_ratio >= det.min_mechanical_ratio
+                    and self._knock_max_flatness >= det.min_spectral_flatness
                 ):
                     self._knock_count += 1
                     event = KnockEvent(
@@ -205,6 +228,7 @@ class KnockDetector:
                 self._knock_peak_amp = 0.0
                 self._knock_peak_rms = 0.0
                 self._knock_duration_s = 0.0
+                self._knock_max_flatness = 0.0
 
         self._prev_peak = peak
         self._prev_rms = rms

@@ -41,6 +41,8 @@ def _run_detector(chunks_with_timestamps, config=None) -> list[KnockEvent]:
         config.detection.min_duration_s = 0.001
         config.detection.max_duration_s = 0.500
         config.detection.noise_floor_alpha = 0.5   # fast floor convergence for tests
+        config.detection.min_spectral_flatness = 0.01  # allow synthetic linear ramps
+        config.detection.min_crest_factor = 1.4
 
     events = []
     det = KnockDetector(config, on_knock=events.append)
@@ -192,3 +194,78 @@ class TestKnockDetectorEdgeCases:
         ])
         events = _run_detector(stream, config=config)
         assert len(events) == 0, f"Expected 0 knocks for sustained speaker audio, got {len(events)}"
+
+
+class TestKnockDetectorVideoRejection:
+    """Tests ensuring laptop speaker video playback is rejected while knocks are detected."""
+
+    def test_video_speech_and_music_rejected(self):
+        """Video dialogue (140-280 Hz harmonics with pauses) must produce 0 false knocks."""
+        config = KnockLockConfig()
+        config.detection.amplitude_threshold = 0.035
+        events = []
+        det = KnockDetector(config, on_knock=events.append)
+        dt = CHUNK / SR
+        t = 0.0
+
+        # Initial quiet baseline
+        for _ in range(30):
+            det.process(np.zeros(CHUNK, dtype=np.float32), t)
+            t += dt
+
+        # Simulate video playing for 100 chunks (speech dialogue + pauses)
+        for i in range(100):
+            t_chunk = np.arange(CHUNK) / SR
+            if i % 15 < 10:
+                # Spoken vowel
+                vocal = (0.15 * np.sin(2 * np.pi * 140 * t_chunk) + 0.10 * np.sin(2 * np.pi * 280 * t_chunk)).astype(np.float32)
+                chunk = vocal + np.random.randn(CHUNK).astype(np.float32) * 0.005
+            else:
+                # Inter-word pause
+                chunk = np.random.randn(CHUNK).astype(np.float32) * 0.002
+            det.process(chunk, t)
+            t += dt
+
+        assert len(events) == 0, f"Expected 0 knocks from video playback, got {len(events)}"
+
+    def test_knock_detected_during_video(self):
+        """A physical knock (table thump/tap) occurring while video is playing should be detected."""
+        config = KnockLockConfig()
+        config.detection.amplitude_threshold = 0.035
+        events = []
+        det = KnockDetector(config, on_knock=events.append)
+        dt = CHUNK / SR
+        t = 0.0
+
+        # 1. Video playback (50 chunks with natural vocal rhythm)
+        for i in range(50):
+            t_chunk = np.arange(CHUNK) / SR
+            vocal = (0.08 * np.sin(2 * np.pi * 160 * t_chunk)).astype(np.float32)
+            chunk = vocal if (i % 15 < 10) else np.random.randn(CHUNK).astype(np.float32) * 0.005
+            det.process(chunk, t)
+            t += dt
+
+        # 2. Knock impulse (sharp impact + 35ms decay)
+        t_impulse = np.arange(CHUNK) / SR
+        knock_chunk = np.zeros(CHUNK, dtype=np.float32)
+        knock_chunk[10:30] = np.random.randn(20).astype(np.float32) * 0.7
+        knock_chunk[30:] = (0.2 * np.exp(-t_impulse[30:] / 0.01) * np.sin(2 * np.pi * 80 * t_impulse[30:])).astype(np.float32)
+        det.process(knock_chunk, t)
+        t += dt
+
+        # Tail decay
+        det.process(knock_chunk * 0.15, t)
+        t += dt
+        det.process(np.random.randn(CHUNK).astype(np.float32) * 0.005, t)
+        t += dt
+
+        # 3. Resume video playback (50 chunks)
+        for i in range(50):
+            t_chunk = np.arange(CHUNK) / SR
+            vocal = (0.08 * np.sin(2 * np.pi * 160 * t_chunk)).astype(np.float32)
+            chunk = vocal if (i % 15 < 10) else np.random.randn(CHUNK).astype(np.float32) * 0.005
+            det.process(chunk, t)
+            t += dt
+
+        assert len(events) == 1, f"Expected exactly 1 knock during video playback, got {len(events)}"
+

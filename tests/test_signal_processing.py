@@ -16,6 +16,8 @@ from knocklock.signal_processing import (
     compute_rms,
     compute_peak,
     compute_mechanical_ratio,
+    compute_spectral_flatness,
+    compute_crest_factor,
     design_highpass,
 )
 
@@ -151,3 +153,39 @@ class TestComputeMechanicalRatio:
         audio = (np.sin(2 * np.pi * 1500 * t) + np.sin(2 * np.pi * 3000 * t)).astype(np.float32)
         ratio = compute_mechanical_ratio(audio, sr)
         assert ratio < 0.4, f"Expected speaker audio ratio < 0.4, got {ratio}"
+
+
+# ── compute_spectral_flatness ─────────────────────────────────────────────
+
+class TestComputeSpectralFlatness:
+    def test_impulse_has_high_flatness(self):
+        # Dirac impulse has flat spectrum -> high flatness
+        impulse = np.zeros(512, dtype=np.float32)
+        impulse[10] = 1.0
+        impulse += np.random.randn(512).astype(np.float32) * 0.05
+        flatness = compute_spectral_flatness(impulse)
+        assert flatness > 0.4, f"Impulse flatness should be > 0.4, got {flatness}"
+
+    def test_pure_tone_has_low_flatness(self):
+        # Pure sinusoidal tone has narrow spectral peak -> very low power flatness (< 0.01)
+        t = np.arange(512) / 44100.0
+        tone = np.sin(2 * np.pi * 440.0 * t).astype(np.float32)
+        flatness = compute_spectral_flatness(tone)
+        assert flatness < 0.05, f"Pure tone flatness should be < 0.05, got {flatness}"
+
+
+# ── compute_crest_factor ──────────────────────────────────────────────────
+
+class TestComputeCrestFactor:
+    def test_impulse_crest_factor_is_high(self):
+        impulse = np.zeros(512, dtype=np.float32)
+        impulse[20] = 1.0
+        crest = compute_crest_factor(impulse)
+        assert crest > 5.0, f"Impulse crest factor should be > 5.0, got {crest}"
+
+    def test_sine_wave_crest_factor_is_low(self):
+        t = np.arange(512) / 44100.0
+        sine = np.sin(2 * np.pi * 440.0 * t).astype(np.float32)
+        crest = compute_crest_factor(sine)
+        assert crest < 2.0, f"Sine crest factor should be around sqrt(2) (~1.41), got {crest}"
+
